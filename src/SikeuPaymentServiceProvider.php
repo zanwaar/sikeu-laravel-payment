@@ -23,28 +23,5 @@ class SikeuPaymentServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/sikeu.php' => config_path('sikeu.php'),
         ], 'sikeu-config');
-
-        // Publish controllers
-        $this->publishes([
-            __DIR__.'/../app/Http/Controllers/PaymentController.php' => app_path('Http/Controllers/PaymentController.php'),
-        ], 'sikeu-controllers');
-
-        // Publish requests
-        $this->publishes([
-            __DIR__.'/../app/Http/Requests/CreatePaymentRequest.php' => app_path('Http/Requests/CreatePaymentRequest.php'),
-        ], 'sikeu-requests');
-
-        // Publish exceptions
-        $this->publishes([
-            __DIR__.'/../app/Exceptions/SikeuPaymentException.php' => app_path('Exceptions/SikeuPaymentException.php'),
-        ], 'sikeu-exceptions');
-
-        // Publish jobs
-        $this->publishes([
-            __DIR__.'/../app/Jobs/CreatePaymentJob.php' => app_path('Jobs/CreatePaymentJob.php'),
-        ], 'sikeu-jobs');
-
-        // Load routes
-        $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
     }
 }
