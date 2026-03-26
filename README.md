@@ -1,8 +1,8 @@
 # SIKEU Laravel Payment
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PHP Version](https://img.shields.io/badge/PHP-8.1%2B-blue.svg)](https://php.net)
-[![Laravel](https://img.shields.io/badge/Laravel-10%2B%7C11%2B%7C12%2B-red.svg)](https://laravel.com)
+[![PHP Version](https://img.shields.io/badge/PHP-8.0%2B-blue.svg)](https://php.net)
+[![Laravel](https://img.shields.io/badge/Laravel-9%2B%7C10%2B%7C11%2B%7C12%2B-red.svg)](https://laravel.com)
 
 Laravel package untuk integrasi SIKEU Payment Gateway yang mendukung multiple payment providers (BRI, BNI, BSI) dengan Virtual Account dan QRIS.
 
@@ -18,8 +18,8 @@ Laravel package untuk integrasi SIKEU Payment Gateway yang mendukung multiple pa
 
 ## 📋 Requirements
 
-- PHP 8.1 or higher
-- Laravel 10.x, 11.x, or 12.x
+- PHP 8.0 or higher
+- Laravel 9.x, 10.x, 11.x, or 12.x
 - Guzzle HTTP Client 7.x
 
 ## 🚀 Installation
