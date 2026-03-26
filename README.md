@@ -60,6 +60,12 @@ php artisan config:clear
 
 Package ini menyediakan service layer untuk SIKEU Payment Gateway. Anda perlu membuat controller dan routes sendiri sesuai kebutuhan aplikasi.
 
+> **💡 Penting:**
+> - List `service_category` yang valid harus diambil dari method `getAvailableServices()`
+> - List `revenue_account_code` yang valid harus diambil dari method `getRevenueAccountCodes()`
+>
+> Kedua method ini mengembalikan daftar yang tersedia di sistem SIKEU. Lihat contoh penggunaan di bawah.
+
 ### 1. Buat Controller
 
 ```php
@@ -135,6 +141,40 @@ class PaymentController extends Controller
             ], 400);
         }
     }
+
+    public function getServiceCategories()
+    {
+        try {
+            $result = $this->sikeuPayment->getAvailableServices();
+
+            return response()->json([
+                'success' => true,
+                'data' => $result['data'],
+            ]);
+        } catch (SikeuPaymentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+    }
+
+    public function getRevenueAccountCodes()
+    {
+        try {
+            $result = $this->sikeuPayment->getRevenueAccountCodes();
+
+            return response()->json([
+                'success' => true,
+                'data' => $result['data'],
+            ]);
+        } catch (SikeuPaymentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+    }
 }
 ```
 
@@ -147,6 +187,8 @@ use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('payments')->group(function () {
+    Route::get('/service-categories', [PaymentController::class, 'getServiceCategories']);
+    Route::get('/revenue-account-codes', [PaymentController::class, 'getRevenueAccountCodes']);
     Route::post('/', [PaymentController::class, 'create']);
     Route::get('/{paymentRequestId}', [PaymentController::class, 'show']);
     Route::delete('/{paymentRequestId}', [PaymentController::class, 'cancel']);
@@ -156,6 +198,12 @@ Route::prefix('payments')->group(function () {
 ### 3. Test API
 
 ```bash
+# Get available service categories (lakukan ini terlebih dahulu)
+curl http://your-app.test/api/payments/service-categories
+
+# Get revenue account codes
+curl http://your-app.test/api/payments/revenue-account-codes
+
 # Create payment
 curl -X POST http://your-app.test/api/payments \
   -H "Content-Type: application/json" \
@@ -164,7 +212,8 @@ curl -X POST http://your-app.test/api/payments \
     "customer_no": "2024000001",
     "customer_name": "John Doe",
     "amount": 5000000,
-    "description": "Tuition Fee"
+    "description": "Tuition Fee",
+    "revenue_account_code": "411100"
   }'
 
 # Check status
@@ -236,6 +285,14 @@ use Sikeu\LaravelPayment\Services\SikeuPaymentService;
 
 $payment = app(SikeuPaymentService::class);
 
+// Get available service categories
+$services = $payment->getAvailableServices();
+// Returns: ['status' => 'success', 'data' => [['code' => 'UKT', ...], ...]]
+
+// Get revenue account codes
+$accountCodes = $payment->getRevenueAccountCodes();
+// Returns: ['status' => 'success', 'data' => [['code' => '411100', ...], ...]]
+
 // Create payment request
 $result = $payment->createPaymentRequest([
     'service_category' => 'UKT',
@@ -243,6 +300,7 @@ $result = $payment->createPaymentRequest([
     'customer_name' => 'John Doe',
     'amount' => 5000000,
     'description' => 'Tuition Fee',
+    'revenue_account_code' => '411100',
 ]);
 
 // Get payment info
@@ -410,12 +468,23 @@ Manual testing with Tinker:
 php artisan tinker
 
 >>> $payment = app(\Sikeu\LaravelPayment\Services\SikeuPaymentService::class);
+
+# Get available service categories
+>>> $services = $payment->getAvailableServices();
+>>> dd($services);
+
+# Get revenue account codes
+>>> $accountCodes = $payment->getRevenueAccountCodes();
+>>> dd($accountCodes);
+
+# Create payment request
 >>> $result = $payment->createPaymentRequest([
-    'service_category' => 'TEST',
+    'service_category' => 'UKT',
     'customer_no' => '001',
     'customer_name' => 'Test',
     'amount' => 50000,
     'description' => 'Test payment',
+    'revenue_account_code' => '411100',
 ]);
 >>> dd($result);
 ```
@@ -455,12 +524,12 @@ Membuat payment request baru.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `service_category` | string | Yes | Kategori layanan (e.g., UKT, SPP, dll) |
+| `service_category` | string | Yes | Kategori layanan. **List kategori yang tersedia bisa didapat dari method `getAvailableServices()`** |
 | `customer_no` | string | Yes | Nomor customer/mahasiswa |
 | `customer_name` | string | Yes | Nama customer/mahasiswa |
 | `amount` | int/float | Yes | Jumlah pembayaran |
 | `description` | string | Yes | Deskripsi pembayaran |
-| `revenue_account_code` | string | Yes | Kode akun pendapatan |
+| `revenue_account_code` | string | Yes | Kode akun pendapatan. **List kode akun yang tersedia bisa didapat dari method `getRevenueAccountCodes()`** |
 | `provider` | string | No | Provider gateway (BRI, BNI, BSI). Default dari config |
 | `attributes` | array | No | Metadata tambahan (prodi, tahun, dll) |
 
@@ -572,12 +641,88 @@ $payment->getPaymentRequest('PAY-123456');
 
 #### `getAvailableServices(): array`
 
-Mendapatkan list service categories yang tersedia.
+Mendapatkan daftar service categories yang tersedia dari sistem SIKEU. **Method ini harus digunakan untuk mendapatkan list valid `service_category` yang dapat digunakan saat membuat payment request.**
 
 **Example:**
 
 ```php
-$payment->getAvailableServices();
+$services = $payment->getAvailableServices();
+
+// Returns:
+// [
+//     'status' => 'success',
+//     'data' => [
+//         ['code' => 'UKT', 'name' => 'Uang Kuliah Tunggal', 'description' => '...'],
+//         ['code' => 'SPP', 'name' => 'Sumbangan Pembinaan Pendidikan', 'description' => '...'],
+//         ['code' => 'WISUDA', 'name' => 'Biaya Wisuda', 'description' => '...'],
+//         // ... dll
+//     ]
+// ]
+
+// Gunakan 'code' sebagai value untuk 'service_category'
+foreach ($services['data'] as $service) {
+    echo $service['code']; // UKT, SPP, WISUDA, etc.
+}
+```
+
+**Response Structure:**
+
+```php
+[
+    'status' => 'success',
+    'data' => [
+        [
+            'code' => 'UKT',           // Gunakan ini untuk service_category
+            'name' => 'Uang Kuliah Tunggal',
+            'description' => 'Pembayaran UKT mahasiswa',
+            'isActive' => true
+        ],
+        // ... kategori lainnya
+    ]
+]
+```
+
+#### `getRevenueAccountCodes(): array`
+
+Mendapatkan daftar kode akun pendapatan (revenue account codes) yang tersedia dari sistem SIKEU. **Method ini harus digunakan untuk mendapatkan list valid `revenue_account_code` yang dapat digunakan saat membuat payment request.**
+
+**Example:**
+
+```php
+$accountCodes = $payment->getRevenueAccountCodes();
+
+// Returns:
+// [
+//     'status' => 'success',
+//     'data' => [
+//         ['code' => '411100', 'name' => 'Pendapatan UKT', 'description' => '...'],
+//         ['code' => '411200', 'name' => 'Pendapatan SPP', 'description' => '...'],
+//         ['code' => '411300', 'name' => 'Pendapatan Wisuda', 'description' => '...'],
+//         // ... dll
+//     ]
+// ]
+
+// Gunakan 'code' sebagai value untuk 'revenue_account_code'
+foreach ($accountCodes['data'] as $account) {
+    echo $account['code']; // 411100, 411200, 411300, etc.
+}
+```
+
+**Response Structure:**
+
+```php
+[
+    'status' => 'success',
+    'data' => [
+        [
+            'code' => '411100',        // Gunakan ini untuk revenue_account_code
+            'name' => 'Pendapatan UKT',
+            'description' => 'Akun pendapatan untuk UKT mahasiswa',
+            'isActive' => true
+        ],
+        // ... kode akun lainnya
+    ]
+]
 ```
 
 ## ⚠️ Important Notes

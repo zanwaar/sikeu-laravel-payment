@@ -201,4 +201,20 @@ class SikeuPaymentService
 
         return $response->getData();
     }
+
+    public function getRevenueAccountCodes(): array
+    {
+        $response = $this->makeRequest('GET', "/api/v1/revenue-account-codes");
+
+        if (!$response->isSuccess()) {
+            throw new SikeuPaymentException(
+                $response->getMessage() ?? 'Failed to get revenue account codes',
+                $response->getStatusCode(),
+                null,
+                $response->getData()
+            );
+        }
+
+        return $response->getData();
+    }
 }
