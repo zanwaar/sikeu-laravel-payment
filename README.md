@@ -256,6 +256,125 @@ $status = $payment->checkPaymentRequest($paymentId);
 $cancel = $payment->cancelPaymentRequest($paymentId);
 ```
 
+### 6. Menggunakan Attributes (Metadata Tambahan)
+
+Package ini mendukung penambahan metadata custom melalui field `attributes`. Sangat berguna untuk menyimpan informasi tambahan seperti prodi, tahun, semester, NIM, dll.
+
+#### Contoh dengan Attributes:
+
+```php
+use Sikeu\LaravelPayment\Services\SikeuPaymentService;
+
+$payment = app(SikeuPaymentService::class);
+
+$result = $payment->createPaymentRequest([
+    'service_category' => 'UKT',
+    'customer_no' => '2024000001',
+    'customer_name' => 'John Doe',
+    'amount' => 5000000,
+    'description' => 'Pembayaran UKT Semester Genap 2024',
+    'revenue_account_code' => '411100',
+    'provider' => 'BRI', // optional, default dari config
+
+    // Additional metadata
+    'attributes' => [
+        'nim' => '2024000001',
+        'prodi' => 'Teknik Informatika',
+        'fakultas' => 'Fakultas Teknik',
+        'tahun_akademik' => '2024/2025',
+        'semester' => 'Genap',
+        'angkatan' => '2024',
+        'jenis_pembayaran' => 'UKT',
+        'periode' => '2024-2',
+        // Tambahkan metadata lain sesuai kebutuhan
+    ]
+]);
+```
+
+#### Attributes di Controller:
+
+```php
+public function create(Request $request)
+{
+    $validated = $request->validate([
+        'service_category' => 'required|string',
+        'customer_no' => 'required|string',
+        'customer_name' => 'required|string',
+        'amount' => 'required|numeric|min:1',
+        'description' => 'required|string',
+        'revenue_account_code' => 'required|string',
+
+        // Validation untuk attributes
+        'nim' => 'nullable|string',
+        'prodi' => 'nullable|string',
+        'fakultas' => 'nullable|string',
+        'tahun_akademik' => 'nullable|string',
+        'semester' => 'nullable|string',
+        'angkatan' => 'nullable|string',
+    ]);
+
+    try {
+        // Build attributes dari request
+        $attributes = [];
+        if ($request->has('nim')) $attributes['nim'] = $request->nim;
+        if ($request->has('prodi')) $attributes['prodi'] = $request->prodi;
+        if ($request->has('fakultas')) $attributes['fakultas'] = $request->fakultas;
+        if ($request->has('tahun_akademik')) $attributes['tahun_akademik'] = $request->tahun_akademik;
+        if ($request->has('semester')) $attributes['semester'] = $request->semester;
+        if ($request->has('angkatan')) $attributes['angkatan'] = $request->angkatan;
+
+        $paymentData = [
+            'service_category' => $validated['service_category'],
+            'customer_no' => $validated['customer_no'],
+            'customer_name' => $validated['customer_name'],
+            'amount' => $validated['amount'],
+            'description' => $validated['description'],
+            'revenue_account_code' => $validated['revenue_account_code'],
+        ];
+
+        // Add attributes jika ada
+        if (!empty($attributes)) {
+            $paymentData['attributes'] = $attributes;
+        }
+
+        $result = $this->sikeuPayment->createPaymentRequest($paymentData);
+
+        return response()->json([
+            'success' => true,
+            'data' => $result['data'],
+        ]);
+    } catch (SikeuPaymentException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage(),
+        ], 400);
+    }
+}
+```
+
+#### Contoh Request dengan Attributes:
+
+```bash
+curl -X POST http://your-app.test/api/payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_category": "UKT",
+    "customer_no": "2024000001",
+    "customer_name": "John Doe",
+    "amount": 5000000,
+    "description": "Pembayaran UKT Semester Genap 2024",
+    "revenue_account_code": "411100",
+    "nim": "2024000001",
+    "prodi": "Teknik Informatika",
+    "fakultas": "Fakultas Teknik",
+    "tahun_akademik": "2024/2025",
+    "semester": "Genap",
+    "angkatan": "2024"
+  }'
+```
+
+**Catatan**: Attributes bersifat opsional dan flexible. Anda bisa menambahkan field apapun sesuai kebutuhan aplikasi Anda.
+
 ## 🔧 Configuration
 
 Edit `config/sikeu.php`:
@@ -328,15 +447,137 @@ sikeu/laravel-payment/
 
 ### SikeuPaymentService
 
+#### `createPaymentRequest(array $data): array`
+
+Membuat payment request baru.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `service_category` | string | Yes | Kategori layanan (e.g., UKT, SPP, dll) |
+| `customer_no` | string | Yes | Nomor customer/mahasiswa |
+| `customer_name` | string | Yes | Nama customer/mahasiswa |
+| `amount` | int/float | Yes | Jumlah pembayaran |
+| `description` | string | Yes | Deskripsi pembayaran |
+| `revenue_account_code` | string | Yes | Kode akun pendapatan |
+| `provider` | string | No | Provider gateway (BRI, BNI, BSI). Default dari config |
+| `attributes` | array | No | Metadata tambahan (prodi, tahun, dll) |
+
+**Example:**
+
 ```php
-// Create payment request
-createPaymentRequest(array $data): array
+$payment->createPaymentRequest([
+    'service_category' => 'UKT',
+    'customer_no' => '2024000001',
+    'customer_name' => 'John Doe',
+    'amount' => 5000000,
+    'description' => 'Pembayaran UKT',
+    'revenue_account_code' => '411100',
+    'provider' => 'BRI',
+    'attributes' => [
+        'nim' => '2024000001',
+        'prodi' => 'Teknik Informatika',
+        'tahun_akademik' => '2024/2025'
+    ]
+]);
+```
 
-// Check payment status
-checkPaymentRequest(string $paymentRequestId): array
+**Returns:**
 
-// Cancel payment
-cancelPaymentRequest(string $paymentRequestId): array
+```php
+[
+    'status' => 'success',
+    'message' => 'Payment request created successfully',
+    'data' => [
+        'paymentRequestId' => 'PAY-123456',
+        'virtualAccountNo' => '8808012345678901',
+        'amount' => 5000000,
+        'status' => 'PENDING',
+        // ... other fields
+    ]
+]
+```
+
+#### `checkPaymentRequest(string $paymentRequestId): array`
+
+Mengecek status pembayaran.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `paymentRequestId` | string | Yes | ID payment request |
+
+**Example:**
+
+```php
+$payment->checkPaymentRequest('PAY-123456');
+```
+
+**Returns:**
+
+```php
+[
+    'status' => 'success',
+    'data' => [
+        'paymentRequestId' => 'PAY-123456',
+        'status' => 'PAID',
+        'paidAt' => '2024-03-26T10:00:00Z',
+        // ... other fields
+    ]
+]
+```
+
+#### `cancelPaymentRequest(string $paymentRequestId): array`
+
+Membatalkan payment request.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `paymentRequestId` | string | Yes | ID payment request |
+
+**Example:**
+
+```php
+$payment->cancelPaymentRequest('PAY-123456');
+```
+
+**Returns:**
+
+```php
+[
+    'status' => 'success',
+    'message' => 'Payment request cancelled successfully'
+]
+```
+
+#### `getPaymentRequest(string $paymentRequestId): array`
+
+Mendapatkan detail payment request.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `paymentRequestId` | string | Yes | ID payment request |
+
+**Example:**
+
+```php
+$payment->getPaymentRequest('PAY-123456');
+```
+
+#### `getAvailableServices(): array`
+
+Mendapatkan list service categories yang tersedia.
+
+**Example:**
+
+```php
+$payment->getAvailableServices();
 ```
 
 ## ⚠️ Important Notes
