@@ -1,19 +1,19 @@
 {
     "name": "sikeu/laravel-payment",
-    "description": "SIKEU Payment Gateway integration package for Laravel - supporting multiple payment providers (BRI, BNI, BSI) with Virtual Account and QRIS",
-    "keywords": ["laravel", "payment", "gateway", "sikeu", "virtual-account", "qris", "bri", "bni", "bsi", "indonesia"],
+    "description": "SIKEU Payment Gateway integration package for Laravel - supporting multiple payment with Virtual Account and QRIS",
+    "keywords": ["laravel", "payment", "gateway", "sikeu", "virtual-account", "qris", "indonesia"],
     "type": "library",
     "license": "MIT",
     "authors": [
         {
             "name": "SIKEU Development Team",
-            "email": "dev@sikeu.id"
+            "email": "zanwaarsamjid@gmail.com"
         }
     ],
     "require": {
         "php": "^8.0|^8.1|^8.2|^8.3",
-        "illuminate/support": "^9.0|^10.0|^11.0|^12.0",
-        "illuminate/http": "^9.0|^10.0|^11.0|^12.0",
+        "illuminate/support": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/http": "^9.0|^10.0|^11.0|^12.0|^13.0",
         "guzzlehttp/guzzle": "^7.0"
     },
     "require-dev": {
