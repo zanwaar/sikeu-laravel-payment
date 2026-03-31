@@ -23,6 +23,7 @@ return [
 
     'payment' => [
         'default_provider' => env('SIKEU_DEFAULT_PROVIDER', 'BRI'),
+        'default_qris_provider' => env('SIKEU_DEFAULT_QRIS_PROVIDER', 'BRI_QRIS'),
         'default_currency' => 'IDR',
     ],
 

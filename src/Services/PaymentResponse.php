@@ -45,6 +45,21 @@ class PaymentResponse
         return $this->data['data']['virtualAccountNo'] ?? null;
     }
 
+    public function getQrContent(): ?string
+    {
+        return $this->data['data']['qrContent'] ?? null;
+    }
+
+    public function getQrId(): ?string
+    {
+        return $this->data['data']['qrId'] ?? null;
+    }
+
+    public function getQrExpiryDate(): ?string
+    {
+        return $this->data['data']['qrExpiryDate'] ?? $this->data['data']['expiryDate'] ?? null;
+    }
+
     public function toArray(): array
     {
         return [

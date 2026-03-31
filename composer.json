@@ -20,6 +20,10 @@
         "orchestra/testbench": "^7.0|^8.0|^9.0",
         "phpunit/phpunit": "^9.0|^10.0"
     },
+    "suggest": {
+        "endroid/qr-code": "Untuk render qrContent string menjadi gambar QR PNG/SVG (^4.0|^5.0)",
+        "simplesoftwareio/simple-qrcode": "Alternatif QR renderer untuk Laravel Blade (^4.0)"
+    },
     "autoload": {
         "psr-4": {
             "Sikeu\\LaravelPayment\\": "src/"

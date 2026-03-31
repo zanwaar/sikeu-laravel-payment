@@ -217,4 +217,44 @@ class SikeuPaymentService
 
         return $response->getData();
     }
+
+    /**
+     * Buat payment request dengan metode QRIS (BRI atau BSI).
+     *
+     * Wrapper dari createPaymentRequest yang secara eksplisit
+     * menggunakan provider QRIS dan mengembalikan qrContent.
+     *
+     * @param array $data {
+     *   service_category: string,
+     *   customer_no: string,
+     *   customer_name: string,
+     *   amount: int,
+     *   description: string,
+     *   revenue_account_code: string,
+     *   provider?: 'BRI_QRIS'|'BSI_QRIS'  (default dari config: BRI_QRIS)
+     *   attributes?: array
+     * }
+     * @return array Response data termasuk qrContent, qrId, paymentRequestId
+     * @throws SikeuPaymentException
+     */
+    public function createQrisPaymentRequest(array $data): array
+    {
+        if (empty($data['provider'])) {
+            $data['provider'] = config('sikeu.payment.default_qris_provider', 'BRI_QRIS');
+        }
+
+        return $this->createPaymentRequest($data);
+    }
+
+    /**
+     * Cek status pembayaran QRIS berdasarkan paymentRequestId.
+     *
+     * @param string $paymentRequestId
+     * @return array
+     * @throws SikeuPaymentException
+     */
+    public function checkQrisPaymentStatus(string $paymentRequestId): array
+    {
+        return $this->checkPaymentRequest($paymentRequestId);
+    }
 }
