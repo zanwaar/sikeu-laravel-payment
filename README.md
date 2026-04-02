@@ -4,7 +4,7 @@
 [![PHP Version](https://img.shields.io/badge/PHP-8.0%2B-blue.svg)](https://php.net)
 [![Laravel](https://img.shields.io/badge/Laravel-9%2B%7C10%2B%7C11%2B%7C12%2B%7C13%2B-red.svg)](https://laravel.com)
 
-Laravel package untuk integrasi SIKEU Payment Gateway yang mendukung multiple payment providers (BRI, BNI, BSI) dengan Virtual Account dan QRIS.
+Laravel package untuk integrasi SIKEU Payment Gateway yang mendukung multiple payment providers (BRI, BSI) dengan Virtual Account dan QRIS.
 
 ## 🎯 Features
 
@@ -433,6 +433,249 @@ curl -X POST http://your-app.test/api/payments \
 
 **Catatan**: Attributes bersifat opsional dan flexible. Anda bisa menambahkan field apapun sesuai kebutuhan aplikasi Anda.
 
+### 7. Handle Callback / Webhook Notifikasi Pembayaran VA
+
+Setelah mahasiswa membayar, SIKEU akan mengirim HTTP POST ke `SIKEU_CALLBACK_URL` yang Anda daftarkan di `.env`.
+
+#### Alur Lengkap Virtual Account
+
+```
+Aplikasi Anda (SIAKAD/LMS)
+  │
+  │  1. createPaymentRequest()  ──►  SIKEU Payment Center
+  │                                        │
+  │  Response: virtualAccountNo ◄──────────┘
+  │
+  │  2. Tampilkan VA ke mahasiswa
+  │     Mahasiswa bayar via ATM / BRImo / Teller
+  │
+  ▼
+BRI memproses pembayaran
+  │
+  │  3. BRI → SIKEU: Payment Notification (otomatis)
+  │     SIKEU update status → PAID
+  │
+  │  4. SIKEU → Aplikasi Anda: HTTP POST ke SIKEU_CALLBACK_URL
+  ▼
+Aplikasi Anda: handle callback, update status mahasiswa
+
+  5. (Opsional) Polling status manual
+     GET /api/payments/{paymentRequestId}
+```
+
+#### Tambahkan `.env`
+
+```env
+# URL yang akan dipanggil SIKEU setelah pembayaran berhasil
+# Harus dapat diakses publik (bukan localhost)
+SIKEU_CALLBACK_URL=https://siakad.unpatti.ac.id/api/sikeu/callback
+```
+
+#### Buat Middleware Validasi Signature HMAC
+
+SIKEU mengirim header `X-Signature` (HMAC-SHA256) di setiap callback. Middleware ini memastikan request benar-benar dari SIKEU:
+
+```php
+<?php
+// app/Http/Middleware/ValidateSikeuSignature.php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class ValidateSikeuSignature
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $timestamp    = $request->header('X-Timestamp');
+        $signature    = $request->header('X-Signature');
+        $sharedSecret = config('sikeu.auth.shared_secret');
+
+        if (!$timestamp || !$signature) {
+            return response()->json(['error' => 'Missing signature headers'], 401);
+        }
+
+        // Tolak jika timestamp lebih dari 5 menit
+        if (abs(time() - strtotime($timestamp)) > 300) {
+            return response()->json(['error' => 'Timestamp expired'], 401);
+        }
+
+        // Hitung HMAC-SHA256
+        $body         = $request->getContent();
+        $stringToSign = $timestamp . ':' . $body;
+        $expected     = hash_hmac('sha256', $stringToSign, $sharedSecret);
+
+        if (!hash_equals($expected, $signature)) {
+            return response()->json(['error' => 'Invalid signature'], 401);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+Daftarkan di `app/Http/Kernel.php`:
+
+```php
+protected $routeMiddleware = [
+    // ...
+    'sikeu.signature' => \App\Http\Middleware\ValidateSikeuSignature::class,
+];
+```
+
+#### Buat Controller Callback
+
+```php
+<?php
+// app/Http/Controllers/SikeuCallbackController.php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+
+class SikeuCallbackController extends Controller
+{
+    /**
+     * Payload yang dikirim SIKEU ke endpoint callback Anda:
+     *
+     * {
+     *   "paymentRequestId": "PAY-123456",
+     *   "virtualAccountNo": "88881234567890001",
+     *   "customerNo":       "2021-56-001",
+     *   "amount":           5000000,
+     *   "paidAmount":       5000000,
+     *   "status":           "PAID",
+     *   "paidAt":           "2026-04-02T14:30:00+07:00",
+     *   "transactionId":    "TXN-BRI-20260402-001",
+     *   "sourceApp":        "SIAKAD"
+     * }
+     */
+    public function handle(Request $request)
+    {
+        $data = $request->json()->all();
+
+        Log::info('SIKEU Callback diterima', $data);
+
+        $paymentRequestId = $data['paymentRequestId'] ?? null;
+
+        if (!$paymentRequestId) {
+            return response()->json(['status' => 'ignored'], 200);
+        }
+
+        // Cari data di database lokal Anda
+        $payment = \DB::table('payments')
+            ->where('payment_request_id', $paymentRequestId)
+            ->first();
+
+        if (!$payment) {
+            Log::warning('SIKEU Callback: paymentRequestId tidak ditemukan', $data);
+            // Tetap return 200 agar SIKEU tidak retry terus-menerus
+            return response()->json(['status' => 'ignored'], 200);
+        }
+
+        // Hindari double processing
+        if ($payment->status === 'PAID') {
+            return response()->json(['status' => 'already_processed'], 200);
+        }
+
+        // Update status di database lokal
+        \DB::table('payments')
+            ->where('payment_request_id', $paymentRequestId)
+            ->update([
+                'status'         => $data['status'],
+                'paid_amount'    => $data['paidAmount'] ?? null,
+                'transaction_id' => $data['transactionId'] ?? null,
+                'paid_at'        => $data['paidAt'] ?? null,
+                'updated_at'     => now(),
+            ]);
+
+        // Proses lanjutan setelah PAID
+        if (($data['status'] ?? '') === 'PAID') {
+            // Contoh: aktifkan akses, kirim notifikasi, dispatch job, dll
+            // UpdateStatusAkademikJob::dispatch($data['customerNo'], $paymentRequestId);
+            Log::info('Pembayaran berhasil', [
+                'nim'              => $data['customerNo'],
+                'paymentRequestId' => $paymentRequestId,
+                'amount'           => $data['paidAmount'],
+            ]);
+        }
+
+        // WAJIB response 200 dalam < 10 detik
+        return response()->json(['status' => 'ok'], 200);
+    }
+}
+```
+
+#### Daftarkan Route Callback
+
+```php
+// routes/api.php
+
+use App\Http\Controllers\SikeuCallbackController;
+
+// Route callback dari SIKEU — tanpa auth, pakai signature validation
+Route::post('/sikeu/callback', [SikeuCallbackController::class, 'handle'])
+    ->middleware('sikeu.signature');
+```
+
+Exclude dari CSRF protection di `app/Http/Middleware/VerifyCsrfToken.php`:
+
+```php
+protected $except = [
+    'api/sikeu/callback',
+];
+```
+
+#### Status Lifecycle Pembayaran
+
+| Status | Arti | Tindakan |
+|--------|------|----------|
+| `PENDING` | VA sudah dibuat, belum dibayar | Tampilkan nomor VA ke user |
+| `PAID` | Pembayaran berhasil diterima | Aktifkan akses / update status akademik |
+| `TIMEOUT` | Callback tidak masuk dalam 10 detik | Rekonsiliasi otomatis H+1 oleh SIKEU |
+| `RECONCILED` | TIMEOUT → berhasil dicocokkan H+1 | Status akhir berhasil (via rekonsiliasi) |
+| `TRULY_FAILED` | Tidak dapat direkonsiliasi > 7 hari | Hubungi admin SIKEU |
+| `CANCELLED` | Dibatalkan manual | Buat payment request baru jika perlu |
+
+#### Poin Penting Callback
+
+> - **Response harus `200 OK` dalam < 10 detik.** Jika > 10 detik, SIKEU tandai sebagai TIMEOUT dan rekonsiliasi H+1.
+> - **Selalu cek idempotency** — pastikan tidak proses double jika callback dikirim ulang.
+> - **Jangan return error 4xx/5xx** untuk kasus data tidak ditemukan. Cukup return `200` dengan body `{"status": "ignored"}`.
+> - **`SIKEU_CALLBACK_URL` harus dapat diakses dari internet** (bukan `localhost`). Gunakan tool seperti [ngrok](https://ngrok.com) saat development.
+
+#### Test Callback Lokal (Development)
+
+Gunakan ngrok untuk expose localhost:
+
+```bash
+ngrok http 8000
+# Salin URL ngrok, contoh: https://abc123.ngrok.io
+```
+
+Set di `.env`:
+
+```env
+SIKEU_CALLBACK_URL=https://abc123.ngrok.io/api/sikeu/callback
+```
+
+Simulasi callback manual via curl:
+
+```bash
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+BODY='{"paymentRequestId":"PAY-123456","virtualAccountNo":"88881234567890001","customerNo":"2021-56-001","amount":5000000,"paidAmount":5000000,"status":"PAID","paidAt":"2026-04-02T14:30:00+07:00","transactionId":"TXN-BRI-TEST-001","sourceApp":"SIAKAD"}'
+SECRET="your-shared-secret-here"
+SIGNATURE=$(echo -n "${TIMESTAMP}:${BODY}" | openssl dgst -sha256 -hmac "${SECRET}" | awk '{print $2}')
+
+curl -X POST https://your-app.test/api/sikeu/callback \
+  -H "Content-Type: application/json" \
+  -H "X-Timestamp: ${TIMESTAMP}" \
+  -H "X-Signature: ${SIGNATURE}" \
+  -d "${BODY}"
+```
+
 ## 🔧 Configuration
 
 Edit `config/sikeu.php`:
@@ -727,10 +970,13 @@ foreach ($accountCodes['data'] as $account) {
 
 ## ⚠️ Important Notes
 
-- Pastikan kolom `status` di database bertipe `STRING/VARCHAR` (bukan ENUM) karena status dari gateway beragam
-- Credentials (API Key & Shared Secret) didapat dari SIKEU admin
-- Gunakan queue untuk payment creation di production
-- Implementasikan webhook handler untuk real-time status update
+- Pastikan kolom `status` di database bertipe `STRING/VARCHAR` (bukan ENUM) karena status dari gateway beragam (`PENDING`, `PAID`, `TIMEOUT`, `RECONCILED`, `TRULY_FAILED`, `CANCELLED`)
+- Credentials (`API Key` & `Shared Secret`) didapat dari admin SIKEU — jangan hardcode di kode
+- Gunakan queue untuk payment creation di production agar tidak blocking request
+- `SIKEU_CALLBACK_URL` harus dapat diakses dari internet, bukan `localhost`
+- Response callback **wajib `200 OK` dalam < 10 detik** — proses berat taruh di queue/job
+- Selalu implementasi **idempotency check** sebelum proses callback (cek apakah sudah `PAID`)
+- Middleware `ValidateSikeuSignature` **wajib dipasang** di route callback untuk keamanan
 
 ## 🐛 Troubleshooting
 
