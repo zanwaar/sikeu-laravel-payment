@@ -676,6 +676,230 @@ curl -X POST https://your-app.test/api/sikeu/callback \
   -d "${BODY}"
 ```
 
+### 8. Payment Request dengan Metode QRIS (BRI atau BSI)
+
+SIKEU mendukung pembayaran via QRIS menggunakan dua provider: **BRI_QRIS** dan **BSI_QRIS**. Gunakan method `createQrisPaymentRequest()` sebagai wrapper yang secara otomatis mengisi provider QRIS.
+
+#### Alur Lengkap QRIS
+
+```
+Aplikasi Anda
+  │
+  │  1. createQrisPaymentRequest()  ──►  SIKEU Payment Center
+  │                                             │
+  │  Response: qrContent (string base64/URL)  ◄─┘
+  │            qrId, paymentRequestId
+  │
+  │  2. Tampilkan QR Code ke mahasiswa (render dari qrContent)
+  │     Mahasiswa scan via BRImo / BSI Mobile / QRIS-enabled app
+  │
+  ▼
+Bank/QRIS Network memproses pembayaran
+  │
+  │  3. SIKEU update status → PAID
+  │
+  │  4. SIKEU → Aplikasi Anda: HTTP POST ke SIKEU_CALLBACK_URL
+  ▼
+Aplikasi Anda: handle callback, update status mahasiswa
+```
+
+#### Tambahkan `.env`
+
+```env
+# Provider QRIS default: BRI_QRIS atau BSI_QRIS
+SIKEU_DEFAULT_QRIS_PROVIDER=BRI_QRIS
+```
+
+#### Update `config/sikeu.php`
+
+```php
+'payment' => [
+    'default_provider'      => env('SIKEU_DEFAULT_PROVIDER', 'BRI'),
+    'default_qris_provider' => env('SIKEU_DEFAULT_QRIS_PROVIDER', 'BRI_QRIS'),
+],
+```
+
+#### Buat Controller QRIS
+
+```php
+<?php
+// app/Http/Controllers/QrisPaymentController.php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Sikeu\LaravelPayment\Facades\SikeuPayment;
+use Sikeu\LaravelPayment\Exceptions\SikeuPaymentException;
+
+class QrisPaymentController extends Controller
+{
+    /**
+     * Buat payment request QRIS dan kembalikan QR code.
+     */
+    public function create(Request $request)
+    {
+        $request->validate([
+            'service_category'     => 'required|string',
+            'customer_no'          => 'required|string',
+            'customer_name'        => 'required|string',
+            'amount'               => 'required|integer|min:1',
+            'description'          => 'required|string',
+            'revenue_account_code' => 'required|string',
+            'provider'             => 'nullable|in:BRI_QRIS,BSI_QRIS',
+        ]);
+
+        try {
+            $result = SikeuPayment::createQrisPaymentRequest([
+                'service_category'     => $request->service_category,
+                'customer_no'          => $request->customer_no,
+                'customer_name'        => $request->customer_name,
+                'amount'               => $request->amount,
+                'description'          => $request->description,
+                'revenue_account_code' => $request->revenue_account_code,
+                'provider'             => $request->provider, // null = pakai default dari config
+            ]);
+
+            return response()->json([
+                'success'          => true,
+                'payment_request_id' => $result['paymentRequestId'],
+                'qr_id'            => $result['qrId'],
+                'qr_content'       => $result['qrContent'],  // render jadi QR image di frontend
+                'amount'           => $result['amount'],
+                'status'           => $result['status'],
+                'expired_at'       => $result['expiredAt'] ?? null,
+            ]);
+
+        } catch (SikeuPaymentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Cek status pembayaran QRIS.
+     */
+    public function status(string $paymentRequestId)
+    {
+        try {
+            $result = SikeuPayment::checkQrisPaymentStatus($paymentRequestId);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $result,
+            ]);
+
+        } catch (SikeuPaymentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+}
+```
+
+#### Daftarkan Routes
+
+```php
+// routes/api.php
+use App\Http\Controllers\QrisPaymentController;
+
+Route::prefix('qris')->group(function () {
+    Route::post('/',                QrisPaymentController::class . '@create');
+    Route::get('/{paymentRequestId}', QrisPaymentController::class . '@status');
+});
+```
+
+#### Contoh Request
+
+```bash
+curl -X POST http://your-app.test/api/qris \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_category": "UKT",
+    "customer_no": "2021-56-001",
+    "customer_name": "Budi Santoso",
+    "amount": 5000000,
+    "description": "Pembayaran UKT Semester Genap 2025/2026",
+    "revenue_account_code": "4010001",
+    "provider": "BRI_QRIS"
+  }'
+```
+
+#### Contoh Response
+
+```json
+{
+  "success": true,
+  "payment_request_id": "PAY-QRIS-20260402-001",
+  "qr_id": "QR-BRI-001",
+  "qr_content": "00020101021226...",
+  "amount": 5000000,
+  "status": "PENDING",
+  "expired_at": "2026-04-02T16:00:00+07:00"
+}
+```
+
+> **Catatan `qr_content`**: Nilai ini adalah string QRIS standar (EMVCo). Render menjadi gambar QR di frontend menggunakan library seperti `qrcode.js` (web) atau `qr_flutter` (Flutter).
+
+#### Render QR di Frontend (JavaScript)
+
+```html
+<!-- Install: npm install qrcode -->
+<canvas id="qr-canvas"></canvas>
+
+<script type="module">
+  import QRCode from 'qrcode';
+
+  const qrContent = "{{ $qrContent }}"; // dari response API
+  QRCode.toCanvas(document.getElementById('qr-canvas'), qrContent, { width: 300 });
+</script>
+```
+
+#### Pilih Provider QRIS
+
+| Provider | Keterangan |
+|----------|------------|
+| `BRI_QRIS` | QRIS via jaringan BRI (default) |
+| `BSI_QRIS` | QRIS via jaringan BSI |
+
+Jika `provider` tidak dikirim di request, sistem akan menggunakan nilai `SIKEU_DEFAULT_QRIS_PROVIDER` dari `.env` (default: `BRI_QRIS`).
+
+#### Direct Service Usage (tanpa HTTP)
+
+```php
+use Sikeu\LaravelPayment\Services\SikeuPaymentService;
+
+$service = app(SikeuPaymentService::class);
+
+// BRI QRIS (default)
+$result = $service->createQrisPaymentRequest([
+    'service_category'     => 'UKT',
+    'customer_no'          => '2021-56-001',
+    'customer_name'        => 'Budi Santoso',
+    'amount'               => 5000000,
+    'description'          => 'Pembayaran UKT',
+    'revenue_account_code' => '4010001',
+]);
+
+// BSI QRIS (eksplisit)
+$result = $service->createQrisPaymentRequest([
+    // ...data sama...
+    'provider' => 'BSI_QRIS',
+]);
+
+$qrContent = $result['qrContent'];  // tampilkan sebagai QR image
+$qrId      = $result['qrId'];
+$requestId = $result['paymentRequestId'];
+
+// Cek status
+$status = $service->checkQrisPaymentStatus($requestId);
+```
+
+---
+
 ## 🔧 Configuration
 
 Edit `config/sikeu.php`:
