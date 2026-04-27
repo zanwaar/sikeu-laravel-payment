@@ -179,6 +179,8 @@ Tambahkan callback URL yang bisa diakses publik:
 SIKEU_CALLBACK_URL=https://your-domain.tld/api/sikeu/callback
 ```
 
+Sampaikan ke admin SIKEU bahwa URL callback ini harus didaftarkan di sisi SIKEU agar notifikasi pembayaran dapat dikirim ke aplikasi Anda.
+
 Route yang direkomendasikan:
 
 ```php
