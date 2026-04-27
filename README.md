@@ -131,7 +131,13 @@ Contoh request:
     "customer_name": "John Doe",
     "amount": 5000000,
     "description": "Pembayaran UKT",
-    "revenue_account_code": "411100"
+    "revenue_account_code": "411100",
+    "attributes": {
+        "nim": "2024000001",
+        "faculty": "Teknik",
+        "study_program": "Informatika",
+        "semester": "2"
+    }
 }
 ```
 
@@ -157,59 +163,171 @@ Response QRIS akan mengandung data seperti `paymentRequestId`, `qrId`, `qrConten
 
 ## Callback
 
-Setelah pembayaran berhasil, SIKEU dapat mengirim callback ke aplikasi Anda. Rekomendasi implementasi:
+Setelah pembayaran diproses, SIKEU dapat mengirim HTTP `POST` ke endpoint callback aplikasi Anda. Callback ini dipakai untuk sinkronisasi status pembayaran tanpa harus terus melakukan polling.
 
-- Sediakan endpoint publik, misalnya `POST /api/sikeu/callback`.
-- Validasi header `X-Signature` menggunakan `SIKEU_SHARED_SECRET`.
-- Terapkan idempotency check sebelum update status pembayaran.
-- Kembalikan `200 OK` secepat mungkin, lalu proses berat lewat queue bila perlu.
+Alur yang direkomendasikan:
 
-Package ini tidak memaksa bentuk callback handler; implementasinya mengikuti kebutuhan aplikasi Anda.
+1. Buat payment request dan simpan `paymentRequestId` di database lokal.
+2. Tampilkan VA atau QRIS ke user.
+3. Setelah user membayar, SIKEU mengirim callback ke aplikasi Anda.
+4. Aplikasi Anda memverifikasi signature, mencari data berdasarkan `paymentRequestId`, lalu mengubah status pembayaran.
+5. Jika perlu, jalankan proses lanjutan seperti aktivasi tagihan, notifikasi, atau queue job.
+
+Tambahkan callback URL yang bisa diakses publik:
+
+```env
+SIKEU_CALLBACK_URL=https://your-domain.tld/api/sikeu/callback
+```
+
+Route yang direkomendasikan:
+
+```php
+use App\Http\Controllers\SikeuCallbackController;
+use Illuminate\Support\Facades\Route;
+
+Route::post('/sikeu/callback', [SikeuCallbackController::class, 'handle'])
+    ->middleware('sikeu.signature');
+```
+
+Header penting yang perlu divalidasi:
+
+- `X-Timestamp`
+- `X-Signature`
+
+Contoh middleware validasi signature:
+
+```php
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class ValidateSikeuSignature
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $timestamp = $request->header('X-Timestamp');
+        $signature = $request->header('X-Signature');
+        $secret = config('sikeu.auth.shared_secret');
+
+        if (!$timestamp || !$signature) {
+            return response()->json(['message' => 'Missing signature headers'], 401);
+        }
+
+        $body = $request->getContent();
+        $expected = hash_hmac('sha256', $timestamp . ':' . $body, $secret);
+
+        if (!hash_equals($expected, $signature)) {
+            return response()->json(['message' => 'Invalid signature'], 401);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+Daftarkan middleware tersebut dengan alias `sikeu.signature` sesuai versi Laravel yang Anda gunakan.
+
+Contoh payload callback:
+
+```json
+{
+    "paymentRequestId": "PAY-123456",
+    "virtualAccountNo": "88881234567890001",
+    "customerNo": "2024000001",
+    "amount": 5000000,
+    "paidAmount": 5000000,
+    "status": "PAID",
+    "paidAt": "2026-04-02T14:30:00+07:00",
+    "transactionId": "TXN-BRI-20260402-001",
+    "sourceApp": "YOUR_APP_NAME"
+}
+```
+
+Contoh handler callback:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class SikeuCallbackController extends Controller
+{
+    public function handle(Request $request)
+    {
+        $data = $request->json()->all();
+        $paymentRequestId = $data['paymentRequestId'] ?? null;
+
+        if (!$paymentRequestId) {
+            return response()->json(['status' => 'ignored'], 200);
+        }
+
+        $payment = DB::table('payments')
+            ->where('payment_request_id', $paymentRequestId)
+            ->first();
+
+        if (!$payment) {
+            return response()->json(['status' => 'ignored'], 200);
+        }
+
+        if ($payment->status === 'PAID') {
+            return response()->json(['status' => 'already_processed'], 200);
+        }
+
+        DB::table('payments')
+            ->where('payment_request_id', $paymentRequestId)
+            ->update([
+                'status' => $data['status'] ?? $payment->status,
+                'paid_amount' => $data['paidAmount'] ?? null,
+                'transaction_id' => $data['transactionId'] ?? null,
+                'paid_at' => $data['paidAt'] ?? null,
+                'updated_at' => now(),
+            ]);
+
+        return response()->json(['status' => 'ok'], 200);
+    }
+}
+```
+
+Hal penting saat implementasi callback:
+
+- Endpoint callback jangan dipasang auth login biasa; cukup lindungi dengan validasi signature.
+- Selalu lakukan idempotency check agar callback yang terkirim ulang tidak memproses pembayaran dua kali.
+- Jika `paymentRequestId` tidak ditemukan, tetap balas `200 OK` agar SIKEU tidak terus retry.
+- Proses berat seperti sinkronisasi akademik atau kirim notifikasi sebaiknya dikirim ke queue.
+- Usahakan response callback cepat; jangan menunggu proses panjang sebelum membalas `200 OK`.
 
 ## Method Yang Tersedia
 
-### `createPaymentRequest(array $data): array`
+### Master Data
 
-Membuat payment request Virtual Account atau provider lain yang Anda kirim lewat field `provider`.
+- `getAvailableServices(): array`
+  Ambil daftar `service_category` yang valid dari SIKEU. Gunakan nilai `code` dari response.
+- `getRevenueAccountCodes(): array`
+  Ambil daftar `revenue_account_code` yang valid dari SIKEU. Gunakan nilai `code` dari response.
 
-Field utama:
+### Payment Request
 
-- `service_category`
-- `customer_no`
-- `customer_name`
-- `amount`
-- `description`
-- `revenue_account_code`
-- `provider` opsional
-- `attributes` opsional
+- `createPaymentRequest(array $data): array`
+  Membuat payment request. Field utama: `service_category`, `customer_no`, `customer_name`, `amount`, `description`, `revenue_account_code`. Field opsional: `provider`, `attributes`.
+- `getPaymentRequest(string $paymentRequestId): array`
+  Ambil detail payment request.
+- `checkPaymentRequest(string $paymentRequestId): array`
+  Cek status payment request.
+- `cancelPaymentRequest(string $paymentRequestId): array`
+  Batalkan payment request.
 
-### `checkPaymentRequest(string $paymentRequestId): array`
+### QRIS
 
-Cek status payment request.
-
-### `getPaymentRequest(string $paymentRequestId): array`
-
-Ambil detail payment request.
-
-### `cancelPaymentRequest(string $paymentRequestId): array`
-
-Batalkan payment request.
-
-### `getAvailableServices(): array`
-
-Ambil daftar `service_category` yang valid dari SIKEU. Gunakan nilai `code` dari response sebagai input `service_category`.
-
-### `getRevenueAccountCodes(): array`
-
-Ambil daftar `revenue_account_code` yang valid dari SIKEU. Gunakan nilai `code` dari response sebagai input `revenue_account_code`.
-
-### `createQrisPaymentRequest(array $data): array`
-
-Membuat payment request QRIS. Jika `provider` tidak dikirim, package akan memakai `SIKEU_DEFAULT_QRIS_PROVIDER`.
-
-### `checkQrisPaymentStatus(string $paymentRequestId): array`
-
-Cek status pembayaran QRIS.
+- `createQrisPaymentRequest(array $data): array`
+  Membuat payment request QRIS. Jika `provider` tidak dikirim, package memakai `SIKEU_DEFAULT_QRIS_PROVIDER`.
+- `checkQrisPaymentStatus(string $paymentRequestId): array`
+  Cek status pembayaran QRIS.
 
 ## Catatan Penting
 
